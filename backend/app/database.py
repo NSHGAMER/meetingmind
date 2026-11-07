@@ -53,9 +53,25 @@ def get_engine():
             else:
                 engine_kwargs["pool_recycle"] = 300
 
-            # Supabase requires SSL on connections
-            if "sslmode" not in db_url and ("supabase" in db_url or os.getenv("VERCEL")):
-                connect_args["sslmode"] = "require"
+            # On Vercel / Serverless, prioritize pure-Python pg8000 driver
+            is_pg8000 = "pg8000" in db_url
+            if (os.getenv("VERCEL") or os.getenv("SERVERLESS")) and not is_pg8000:
+                try:
+                    import pg8000  # noqa: F401
+                    db_url = db_url.replace("postgresql://", "postgresql+pg8000://", 1)
+                    is_pg8000 = True
+                except ImportError:
+                    pass
+
+            if is_pg8000:
+                import ssl
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                connect_args["ssl_context"] = ctx
+            else:
+                if "sslmode" not in db_url and ("supabase" in db_url or os.getenv("VERCEL")):
+                    connect_args["sslmode"] = "require"
 
         log.info("Initializing SQLAlchemy engine (type: %s)", db_url.split(":")[0])
         try:
@@ -65,12 +81,11 @@ def get_engine():
             if ("psycopg" in str(e).lower() or "no module" in str(e).lower()) and db_url.startswith("postgresql://"):
                 alt_url = db_url.replace("postgresql://", "postgresql+pg8000://", 1)
                 log.warning("Postgres driver error (%s). Falling back to pure-Python pg8000: %s", e, alt_url.split("@")[-1])
-                # pg8000 handles SSL via ssl_context or ssl parameter
-                pg8000_args = {}
-                if "sslmode" in connect_args:
-                    import ssl
-                    pg8000_args["ssl_context"] = ssl.create_default_context()
-                _engine = create_engine(alt_url, connect_args=pg8000_args, **engine_kwargs)
+                import ssl
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                _engine = create_engine(alt_url, connect_args={"ssl_context": ctx}, **engine_kwargs)
             else:
                 raise
     return _engine
