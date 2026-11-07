@@ -15,7 +15,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    init_db()
+    try:
+        init_db()
+    except Exception as e:
+        logging.getLogger("meetingmind").error("Startup database initialization error: %s", e)
     yield
 
 
@@ -52,3 +55,52 @@ async def _llm(_: Request, e: LLMError):
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.get("/api/diag")
+def diag():
+    import os
+    from sqlalchemy import text
+    from .database import get_engine
+
+    s = get_settings()
+    db_ok = False
+    db_err = None
+    engine_type = "unknown"
+
+    try:
+        eng = get_engine()
+        engine_type = eng.name
+        with eng.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        db_ok = True
+    except Exception as exc:
+        db_err = str(exc)
+
+    safe_env = sorted([
+        k for k in os.environ.keys()
+        if not any(x in k.lower() for x in ["key", "secret", "pass", "token", "auth"])
+    ])
+
+    return {
+        "status": "ok",
+        "database": {
+            "connected": db_ok,
+            "engine": engine_type,
+            "error": db_err,
+        },
+        "hindsight": {
+            "url": s.hindsight_api_url,
+            "has_api_key": bool(s.hindsight_api_key),
+            "bank_prefix": s.hindsight_bank_prefix,
+        },
+        "llm": {
+            "provider": s.llm_provider,
+            "model": s.llm_model,
+            "has_api_key": bool(s.llm_api_key),
+        },
+        "environment": {
+            "is_vercel": bool(os.getenv("VERCEL")),
+            "keys_present": safe_env,
+        },
+    }

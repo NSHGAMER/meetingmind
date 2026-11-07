@@ -53,8 +53,26 @@ def get_engine():
             else:
                 engine_kwargs["pool_recycle"] = 300
 
+            # Supabase requires SSL on connections
+            if "sslmode" not in db_url and ("supabase" in db_url or os.getenv("VERCEL")):
+                connect_args["sslmode"] = "require"
+
         log.info("Initializing SQLAlchemy engine (type: %s)", db_url.split(":")[0])
-        _engine = create_engine(db_url, connect_args=connect_args, **engine_kwargs)
+        try:
+            _engine = create_engine(db_url, connect_args=connect_args, **engine_kwargs)
+        except Exception as e:
+            # Fallback to pure-Python pg8000 driver if psycopg2 has binary/shared-library issues on Vercel
+            if ("psycopg" in str(e).lower() or "no module" in str(e).lower()) and db_url.startswith("postgresql://"):
+                alt_url = db_url.replace("postgresql://", "postgresql+pg8000://", 1)
+                log.warning("Postgres driver error (%s). Falling back to pure-Python pg8000: %s", e, alt_url.split("@")[-1])
+                # pg8000 handles SSL via ssl_context or ssl parameter
+                pg8000_args = {}
+                if "sslmode" in connect_args:
+                    import ssl
+                    pg8000_args["ssl_context"] = ssl.create_default_context()
+                _engine = create_engine(alt_url, connect_args=pg8000_args, **engine_kwargs)
+            else:
+                raise
     return _engine
 
 
