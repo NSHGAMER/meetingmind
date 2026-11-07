@@ -20,64 +20,69 @@ summariser — the persistent memory is the product.
 5. **Prepare** — Hindsight recall per participant + open commitments from the tracker → briefing with `[M#]/[C#]` citations back to the source meeting. Uncited history claims are stripped server-side. Retrieved facts and AI recommendations are labelled separately.
 6. **Compare** — the Prepare screen can show a *generic* briefing next to the *memory-powered* one (the judges' demo moment).
 
-## Hindsight architecture
-Uses the official `hindsight-client` SDK (`create_bank`, `retain`, `recall`) only.
+## Architecture
 
-| Concern | Design |
-|---|---|
-| User isolation | One bank per user: `<prefix>-user-<id>` + tags `user:<id>` |
-| Association | Tags `contact:<id>`, `meeting:<id>`; metadata `meeting_id`, `meeting_date`, `source` |
-| Provenance | Every fact line carries meeting title + date; recall results map back via `document_id` |
-| No duplicates | One document per meeting (`meeting-<id>`); re-confirming **replaces** its facts |
-| Supersession | Status changes retain `commitment-<id>` documents saying "supersedes earlier statements" |
-| Confirmed vs suggested | `CONFIRMED COMMITMENT` vs `SUGGESTION ONLY` wording; suggestions never create tracker records |
-| Authoritative status | The SQLite commitment tracker decides status; memory narrates history |
-| Honest stats | Memory Intelligence numbers come from a log of real retain/recall calls (`memory_events`) |
-
-SQLite holds application records (users, contacts, meetings, commitments); long-term memory lives only in Hindsight.
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       Vercel Project                        │
+│                                                             │
+│   ┌─────────────────────────┐   ┌────────────────────────┐  │
+│   │ React + TS Frontend     │   │ Python FastAPI         │  │
+│   │ (Vite + Tailwind SPA)   │──>│ Serverless Function    │  │
+│   │ /                       │   │ /api/* (api/index.py)  │  │
+│   └─────────────────────────┘   └───────────┬────────────┘  │
+└─────────────────────────────────────────────┼───────────────┘
+                                              │
+                      ┌───────────────────────┼───────────────────────┐
+                      │                       │                       │
+                      ▼                       ▼                       ▼
+            ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+            │     Supabase     │    │ Hindsight Cloud  │    │     Groq LLM     │
+            │    PostgreSQL    │    │ (Vectorize.io)   │    │ (openai/gpt-oss) │
+            │ Relational Data  │    │ Agent Memory     │    │ High-Speed Infer │
+            └──────────────────┘    └──────────────────┘    └──────────────────┘
+```
 
 ## Stack
-React + TypeScript + Vite + Tailwind + Lucide + Recharts · FastAPI + Pydantic + SQLAlchemy (SQLite) · Hindsight · Groq (any OpenAI-compatible LLM, configurable).
+- **Frontend**: React + TypeScript + Vite + Tailwind + Lucide + Recharts
+- **Backend**: FastAPI + Pydantic v2 + SQLAlchemy (running on Vercel Python Functions)
+- **Database**: Supabase PostgreSQL (or local SQLite for dev)
+- **Agent Memory**: Hindsight Cloud by Vectorize.io
+- **AI / LLM**: Groq API
 
-## Setup
+## Local Development Setup
+
 ```bash
-# 1. Hindsight (pick one)
-docker run --rm -it -p 8888:8888 -p 9999:9999 -e HINDSIGHT_API_LLM_API_KEY=$GROQ_KEY \
-  -e HINDSIGHT_API_LLM_PROVIDER=groq -e HINDSIGHT_API_LLM_MODEL=openai/gpt-oss-20b \
-  -v $HOME/.hindsight-docker:/home/hindsight/.pg0 ghcr.io/vectorize-io/hindsight:latest
-#   or Hindsight Cloud: https://ui.hindsight.vectorize.io  (API URL https://api.hindsight.vectorize.io + key)
+# 1. Clone repository
+git clone https://github.com/NSHGAMER/meetingmind.git
+cd meetingmind
 
-# 2. Backend
-cd backend && python -m venv .venv && source .venv/bin/activate
+# 2. Configure environment
+cp .env.example backend/.env
+# Fill in your HINDSIGHT_API_KEY and LLM_API_KEY in backend/.env
+
+# 3. Backend setup & verification
+cd backend
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp ../.env.example .env            # fill LLM_API_KEY, HINDSIGHT_*, JWT_SECRET
-python -m scripts.hindsight_smoke_test   # verifies a REAL Hindsight connection
+
+# Run Hindsight smoke test
+python -m scripts.hindsight_smoke_test
+
+# Run backend test suite
+python -m pytest
+
+# Start local backend server
 uvicorn app.main:app --reload --port 8000
 
-# 3. Frontend
-cd ../frontend && npm install && cp .env.example .env && npm run dev   # http://localhost:5173
+# 4. Frontend setup
+cd ../frontend
+npm install
+npm run dev   # Available at http://localhost:5173
 ```
-Verify the Hindsight docker env-var names against the current Hindsight docs for your version.
 
-## Environment variables
-See `.env.example` (all documented). Secrets live only in `backend/.env`; the frontend only knows `VITE_API_URL`.
+## Production Deployment (Vercel)
 
-## Tests
-```bash
-cd backend && python -m pytest -q
-```
-Tests use an in-memory **fake** Hindsight and a deterministic **fake** LLM (`tests/fakes.py`) — they verify application logic
-(flow, isolation, error handling), **not** Hindsight/LLM quality. Real-service verification: `scripts/hindsight_smoke_test.py`.
-
-## Demo workflow
-See `docs/DEMO_SCRIPT.md`. Short version: register → *Load demo data* → analyse+confirm Meeting 1 → analyse+confirm Meeting 2 → open Meeting 3 → **Compare**.
-
-## Docs
-`docs/ARCHITECTURE.md` · `docs/API.md` · `docs/DEPLOYMENT.md` · `docs/DEMO_SCRIPT.md` · `BUILD_PROGRESS.md`
-
-## Privacy
-Notes sent for analysis and recalled memories used in briefings go to the configured LLM provider. This is stated in the UI
-(consent checkbox, Settings page, briefing footer). Uploads: type allow-list, 2 MB cap, text-only extraction.
-
-## Known limitations
-See `BUILD_PROGRESS.md` (audio transcription not implemented; deleting meetings doesn't purge Hindsight documents; SQLite on ephemeral hosts).
+MeetingMind is configured for single-click full-stack deployment on **Vercel** with **Supabase PostgreSQL**.
+See complete instructions in [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).

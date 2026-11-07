@@ -40,6 +40,10 @@ class LLMClient:
             )
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as e:
+            err_body = e.response.text if hasattr(e, "response") else ""
+            log.error("LLM call failed with status %s: %s", e.response.status_code, err_body)
+            raise LLMError(f"LLM provider call failed ({e.response.status_code}): {err_body}") from e
         except (httpx.HTTPError, KeyError, ValueError) as e:
             log.error("LLM call failed: %s", e)
             raise LLMError(f"LLM provider call failed: {e}") from e

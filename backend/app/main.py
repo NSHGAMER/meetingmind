@@ -20,8 +20,14 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="MeetingMind API", version="1.0.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=get_settings().cors_list, allow_credentials=True,
-                   allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().cors_list,
+    allow_origin_regex=r"https://.*\.vercel\.app|http://localhost:\d+|http://127\.0\.0\.1:\d+",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 for r in (auth, contacts, meetings, commitments, memory, dashboard, demo):
     app.include_router(r.router)
@@ -43,5 +49,6 @@ async def _llm(_: Request, e: LLMError):
 
 
 @app.get("/api/health")
+@app.get("/health")
 def health():
     return {"status": "ok"}

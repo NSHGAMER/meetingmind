@@ -1,4 +1,5 @@
-const RAW_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
+const envApiUrl = import.meta.env.VITE_API_URL as string | undefined;
+const RAW_BASE = envApiUrl !== undefined ? envApiUrl : (import.meta.env.DEV ? "http://localhost:8000" : "");
 const BASE = RAW_BASE.replace(/\/+$/, "");
 
 export class ApiError extends Error {
