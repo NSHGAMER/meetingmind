@@ -26,21 +26,36 @@ class LLMClient:
     def _complete(self, messages: list[dict]) -> str:
         if not self.api_key:
             raise LLMError("LLM_API_KEY is not configured on the server.")
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.1,
+        }
+
         try:
             r = httpx.post(
                 f"{self.base_url}/chat/completions",
                 headers={"Authorization": f"Bearer {self.api_key}"},
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": 0.1,
-                    "response_format": {"type": "json_object"},
-                },
+                json={**payload, "response_format": {"type": "json_object"}},
                 timeout=90.0,
             )
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
         except httpx.HTTPStatusError as e:
+            if e.response.status_code == 400 and "json_validate_failed" in e.response.text:
+                log.warning("Groq json_validate_failed; retrying without response_format constraint")
+                try:
+                    r2 = httpx.post(
+                        f"{self.base_url}/chat/completions",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        json=payload,
+                        timeout=90.0,
+                    )
+                    r2.raise_for_status()
+                    return r2.json()["choices"][0]["message"]["content"]
+                except Exception as e2:
+                    log.error("Retry without response_format failed: %s", e2)
             err_body = e.response.text if hasattr(e, "response") else ""
             log.error("LLM call failed with status %s: %s", e.response.status_code, err_body)
             raise LLMError(f"LLM provider call failed ({e.response.status_code}): {err_body}") from e
@@ -77,12 +92,15 @@ def _strip_fences(s: str) -> str:
     return s.strip()
 
 
-_llm: LLMClient | None = None
+_client: LLMClient | None = None
 
 
-def get_llm_client() -> LLMClient:
-    global _llm
-    if _llm is None:
+def get_llm() -> LLMClient:
+    global _client
+    if _client is None:
         s = get_settings()
-        _llm = LLMClient(s.llm_base_url, s.llm_api_key, s.llm_model, s.llm_provider)
-    return _llm
+        _client = LLMClient(s.llm_base_url, s.llm_api_key, s.llm_model, s.llm_provider)
+    return _client
+
+
+get_llm_client = get_llm
